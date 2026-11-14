@@ -1,0 +1,65 @@
+# ---------------------------------------------------------------------------
+# TP8 — Règles d'alerte (SQUELETTE) — étapes 4 et 6
+#
+# Anatomie d'une alerte :
+#   alert:       son nom, en CamelCase
+#   expr:        une expression PromQL. Tant qu'elle renvoie au moins une
+#                série, l'alerte est « active » pour cette série.
+#   for:         durée pendant laquelle expr doit rester vraie avant que
+#                l'alerte passe de PENDING à FIRING. C'est l'anti-rebond.
+#   labels:      servent au ROUTAGE dans l'Alertmanager (severity, équipe…).
+#   annotations: servent à l'HUMAIN qui reçoit l'alerte (quoi, où, combien).
+#
+# Valider :
+#     docker compose exec prometheus promtool check rules /etc/prometheus/rules/alerts.yml
+# ---------------------------------------------------------------------------
+
+groups:
+  - name: tp8-alertes
+    rules:
+
+      # ---- Modèle fourni ------------------------------------------------
+      # Une cible ne répond plus. « up » vaut 1 ou 0 pour chaque cible
+      # scrapée : c'est la métrique la plus simple et la plus précieuse.
+      - alert: InstanceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cible {{ $labels.instance }} injoignable"
+          description: >-
+            La cible {{ $labels.instance }} du job {{ $labels.job }} ne
+            répond plus depuis au moins 1 minute.
+
+      # TODO 10 : CPU élevé.
+      #   Nom     : HighCpuUsage
+      #   expr    : réutilise la recording rule de l'étape 4 ( > 80 )
+      #   for     : 2m — on ne réveille personne pour un pic de 10 secondes
+      #   labels  : severity: warning
+      #   annotations : summary + description avec la valeur ({{ $value }})
+
+      # TODO 11 : disque presque plein (plus de 85 % utilisé).
+      #   Nom     : DiskSpaceLow
+      #   Piste   : node_filesystem_avail_bytes et node_filesystem_size_bytes,
+      #             en excluant les systèmes de fichiers temporaires
+      #             (fstype!~"tmpfs|overlay|squashfs").
+      #   for     : 5m — un disque ne se remplit pas en 10 secondes
+      #   labels  : severity: warning
+
+      # TODO 12 : Apache ne répond plus.
+      #   Nom     : ApacheDown
+      #   Piste   : la métrique apache_up vaut 1 quand mod_status répond.
+      #   for     : 1m
+      #   labels  : severity: critical
+
+      # TODO 13 (étape 6) : sauvegarde trop ancienne.
+      #   Nom     : BackupTooOld
+      #   Piste   : la Pushgateway expose backup_last_success_timestamp_seconds.
+      #             time() donne l'heure actuelle en secondes.
+      #             L'écart dépasse-t-il 24 h (86400) ?
+      #   for     : 10m
+      #   labels  : severity: warning
+      #   Attention : si le job n'a JAMAIS tourné, la métrique n'existe pas
+      #               et l'alerte ne se déclenche pas. On en reparle à
+      #               l'étape 6.

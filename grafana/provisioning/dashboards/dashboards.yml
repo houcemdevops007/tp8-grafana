@@ -1,0 +1,20 @@
+# ---------------------------------------------------------------------------
+# TP8 — Fournisseur de dashboards.
+# Tous les .json du dossier json/ sont chargés au démarrage de Grafana.
+# ---------------------------------------------------------------------------
+apiVersion: 1
+
+providers:
+  - name: 'TP8'
+    orgId: 1
+    folder: 'TP8'
+    type: file
+    disableDeletion: false
+    # Tu peux modifier un dashboard provisionné dans l'interface, mais
+    # « Enregistrer » est refusé : il faut l'enregistrer sous un autre nom.
+    # C'est voulu : le fichier reste la source de vérité.
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards/json
+      foldersFromFilesStructure: false

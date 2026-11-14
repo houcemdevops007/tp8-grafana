@@ -1,0 +1,33 @@
+# ---------------------------------------------------------------------------
+# TP8 — Règles d'enregistrement (SQUELETTE) — étape 4
+#
+# Une « recording rule » calcule une expression à intervalle régulier et
+# enregistre le résultat dans une nouvelle série. On l'utilise pour les
+# expressions coûteuses ou réutilisées dans plusieurs dashboards et alertes.
+#
+# Convention de nommage Prometheus :  niveau:métrique:opération
+#
+# Valider :
+#     docker compose exec prometheus promtool check rules /etc/prometheus/rules/recording.yml
+# ---------------------------------------------------------------------------
+
+groups:
+  - name: tp8-recording
+    interval: 30s
+    rules:
+
+      # ---- Modèle fourni ------------------------------------------------
+      # Nombre de cibles UP par job. Utile pour un panneau « santé ».
+      - record: job:up:count
+        expr: count by (job) (up == 1)
+
+      # TODO 9 : pourcentage de CPU réellement utilisé, par instance.
+      #
+      #   Nom attendu : instance:node_cpu_utilisation:ratio
+      #   Piste       : node_cpu_seconds_total est un compteur par cœur ET
+      #                 par mode. Le mode « idle » dit le temps PERDU.
+      #                 Utilisé = 100 % - idle.
+      #                 Pense à rate(...[5m]), puis avg by (instance).
+      #
+      # - record: instance:node_cpu_utilisation:ratio
+      #   expr: ...

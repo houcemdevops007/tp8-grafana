@@ -1,0 +1,73 @@
+# ---------------------------------------------------------------------------
+# TP8 — alertmanager.yml (SQUELETTE) — étape 5
+#
+# Prometheus décide QUAND une alerte se déclenche.
+# L'Alertmanager décide QUI est prévenu, COMMENT, et à quelle fréquence.
+#
+# Ce fichier démarre tel quel. Valider après chaque modification :
+#     docker compose exec alertmanager amtool check-config /etc/alertmanager/alertmanager.yml
+#     docker compose restart alertmanager
+# ---------------------------------------------------------------------------
+
+global:
+  # Délai après lequel une alerte qui ne se déclenche plus est considérée
+  # comme résolue, si Prometheus cesse de l'envoyer.
+  resolve_timeout: 5m
+
+  # Mailpit : un faux serveur SMTP qui n'envoie RIEN sur Internet et
+  # affiche tous les messages reçus sur http://<VM>:8025
+  smtp_smarthost: 'mailpit:1025'
+  smtp_from: 'alertmanager@tp8.lab'
+  smtp_require_tls: false
+
+route:
+  receiver: 'equipe-infra'
+
+  # TODO 14 : regroupe les alertes qui parlent de la même chose.
+  #           Avec ['alertname'], 12 disques pleins = 1 seul e-mail.
+  #           Avec ['alertname', 'instance'], ce serait 12 e-mails.
+  group_by: ['alertname']
+
+  # TODO 15 : règle les trois délais.
+  #   group_wait     : on attend un peu avant le PREMIER e-mail d'un groupe,
+  #                    pour laisser arriver les alertes voisines (30s).
+  #   group_interval : délai avant d'annoncer une NOUVELLE alerte dans un
+  #                    groupe déjà notifié (5m).
+  #   repeat_interval: au bout de combien de temps on re-prévient pour une
+  #                    alerte toujours active (4h ; 1h pour le TP, sinon tu
+  #                    n'auras jamais de rappel pendant la séance).
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+  # TODO 16 : ajoute ici une route spécifique pour severity=critical,
+  #           avec un receiver dédié et un group_wait plus court.
+  # routes:
+  #   - matchers:
+  #       - severity = critical
+  #     receiver: 'astreinte'
+  #     group_wait: 10s
+  #     repeat_interval: 1h
+
+receivers:
+  - name: 'equipe-infra'
+    email_configs:
+      # TODO 17 : adresse de destination. N'importe laquelle : Mailpit
+      #           accepte tout et n'envoie rien dehors.
+      - to: 'infra@tp8.lab'
+        send_resolved: true
+
+  # TODO 16 (suite) : déclare ici le receiver « astreinte ».
+  # - name: 'astreinte'
+  #   email_configs:
+  #     - to: 'astreinte@tp8.lab'
+  #       send_resolved: true
+
+# TODO 18 : règle d'inhibition.
+#   Quand Apache est à terre (ApacheDown), les alertes de trafic sur le même
+#   service sont du bruit : elles décrivent la conséquence, pas la cause.
+#   Une inhibit_rule éteint les secondes tant que la première est active.
+# inhibit_rules:
+#   - source_matchers: [...]
+#     target_matchers: [...]
+#     equal: [...]

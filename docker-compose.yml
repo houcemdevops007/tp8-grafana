@@ -1,0 +1,337 @@
+# ---------------------------------------------------------------------------
+# TP8 — Prometheus autonome : pull, Alertmanager et Pushgateway
+#
+#   Stack de base     : docker compose up -d
+#   Partie traces     : docker compose --profile traces up -d
+#   Tout arrêter      : docker compose --profile traces down -v
+#
+# Toutes les versions d'images sont figées : deux candidats qui lancent la
+# stack à une semaine d'intervalle obtiennent exactement le même environnement.
+# ---------------------------------------------------------------------------
+name: tp8
+
+x-tp8-logging: &tp8-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+
+  # =========================================================================
+  # SOCLE — métriques et alertes
+  # =========================================================================
+
+  prometheus:
+    image: prom/prometheus:v3.16.0
+    container_name: tp8-prometheus
+    restart: unless-stopped
+    user: "65534:65534"              # nobody : le volume de données lui appartient
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # Rétention courte : ce TP ne garde pas d'historique, et 20 stacks
+      # tournent en parallèle sur le même hyperviseur.
+      - --storage.tsdb.retention.time=2d
+      # Recharge à chaud par « curl -X POST http://localhost:9090/-/reload ».
+      - --web.enable-lifecycle
+      # Reçoit le remote_write du metrics-generator de Tempo (profil traces).
+      - --web.enable-remote-write-receiver
+      # Stocke les exemplars : le lien « métrique -> trace » de l'étape 13.
+      - --enable-feature=exemplar-storage
+    volumes:
+      # Lecture seule : Prometheus n'a aucune raison d'écrire dans sa config.
+      - ./prometheus:/etc/prometheus:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    networks: [tp8]
+    mem_limit: 512m
+    cpus: 1.0
+    logging: *tp8-logging
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  node-exporter:
+    image: prom/node-exporter:v1.12.1
+    container_name: tp8-node-exporter
+    restart: unless-stopped
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/host/root
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro,rslave
+    pid: host
+    # Pas de port publié : seul Prometheus, sur le réseau tp8, le scrape.
+    # C'est aussi ce qui évite le conflit avec le node_exporter du TP1 si tu
+    # lances la stack sur ta VM Apache.
+    expose: ["9100"]
+    networks: [tp8]
+    mem_limit: 64m
+    cpus: 0.3
+    logging: *tp8-logging
+
+  httpd:
+    image: httpd:2.4.71-alpine
+    container_name: tp8-httpd
+    restart: unless-stopped
+    # Le httpd.conf de l'image n'est pas remplacé : on ajoute un fragment.
+    command: ["httpd-foreground", "-c", "Include conf/extra/tp8.conf"]
+    volumes:
+      - ./apache/tp8.conf:/usr/local/apache2/conf/extra/tp8.conf:ro
+      - ./apache/htdocs:/usr/local/apache2/htdocs:ro
+    ports:
+      - "${APACHE_PORT:-8080}:80"
+    networks: [tp8]
+    mem_limit: 128m
+    cpus: 0.5
+    logging: *tp8-logging
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/server-status?auto"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  apache-exporter:
+    image: lusotycoon/apache-exporter:v1.1.3
+    container_name: tp8-apache-exporter
+    restart: unless-stopped
+    command:
+      - --scrape_uri=http://httpd/server-status?auto
+    expose: ["9117"]
+    networks: [tp8]
+    depends_on:
+      httpd:
+        condition: service_healthy
+    mem_limit: 64m
+    cpus: 0.3
+    logging: *tp8-logging
+
+  alertmanager:
+    image: prom/alertmanager:v0.35.0
+    container_name: tp8-alertmanager
+    restart: unless-stopped
+    user: "65534:65534"
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      # URL publique : les liens des e-mails doivent être cliquables depuis
+      # ton poste, pas depuis l'intérieur du conteneur.
+      - --web.external-url=http://localhost:${ALERTMANAGER_PORT:-9093}
+    volumes:
+      - ./alertmanager:/etc/alertmanager:ro
+      - alertmanager_data:/alertmanager
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    networks: [tp8]
+    mem_limit: 128m
+    cpus: 0.5
+    logging: *tp8-logging
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9093/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  pushgateway:
+    image: prom/pushgateway:v1.11.5
+    container_name: tp8-pushgateway
+    restart: unless-stopped
+    command:
+      # Les métriques poussées survivent à un redémarrage du conteneur.
+      - --persistence.file=/data/pushgateway.store
+      - --persistence.interval=1m
+    volumes:
+      - pushgateway_data:/data
+    ports:
+      - "${PUSHGATEWAY_PORT:-9091}:9091"
+    networks: [tp8]
+    mem_limit: 64m
+    cpus: 0.3
+    logging: *tp8-logging
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9091/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  mailpit:
+    image: axllent/mailpit:v1.33.1
+    container_name: tp8-mailpit
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: "500"
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"     # faux SMTP : aucun compte à créer
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      - "${MAILPIT_PORT:-8025}:8025"      # interface web
+      # Le port SMTP 1025 n'est pas publié : seul Alertmanager, sur le réseau
+      # tp8, en a besoin.
+    expose: ["1025"]
+    networks: [tp8]
+    mem_limit: 128m
+    cpus: 0.3
+    logging: *tp8-logging
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  grafana:
+    image: grafana/grafana:13.2.6
+    container_name: tp8-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-tp8-observabilite}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      # Pas d'accès Internet nécessaire : les dashboards sont provisionnés.
+      GF_INSTALL_PLUGINS: ""
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    networks: [tp8]
+    depends_on: [prometheus]
+    mem_limit: 512m
+    cpus: 1.0
+    logging: *tp8-logging
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # =========================================================================
+  # PROFIL « traces » — OpenTelemetry et Tempo
+  #   docker compose --profile traces up -d
+  # =========================================================================
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.165.0
+    container_name: tp8-otel-collector
+    profiles: [traces]
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector:/etc/otelcol:ro
+    ports:
+      # Publiés pour que tu puisses envoyer une trace de test depuis la VM.
+      - "${OTLP_GRPC_PORT:-4317}:4317"
+      - "${OTLP_HTTP_PORT:-4318}:4318"
+    networks: [tp8]
+    depends_on: [tempo]
+    mem_limit: 256m
+    cpus: 0.5
+    logging: *tp8-logging
+
+  tempo:
+    image: grafana/tempo:3.1.1
+    container_name: tp8-tempo
+    profiles: [traces]
+    restart: unless-stopped
+    user: "0:0"                      # Tempo crée ses répertoires dans /var/tempo
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    ports:
+      - "${TEMPO_PORT:-3200}:3200"   # API HTTP + /ready
+    networks: [tp8]
+    mem_limit: 512m
+    cpus: 1.0
+    logging: *tp8-logging
+
+  postgres:
+    image: postgres:17.12-alpine
+    container_name: tp8-postgres
+    profiles: [traces]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-boutique}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-boutique}
+      POSTGRES_DB: ${POSTGRES_DB:-boutique}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    expose: ["5432"]
+    networks: [tp8]
+    mem_limit: 256m
+    cpus: 0.5
+    logging: *tp8-logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-boutique} -d ${POSTGRES_DB:-boutique}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  app:
+    # Construite localement : voir app/Dockerfile.
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    image: tp8/boutique-java:1.0.0
+    container_name: tp8-app
+    profiles: [traces]
+    restart: unless-stopped
+    environment:
+      # --- Connexion à PostgreSQL ---
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-boutique}
+      DB_USER: ${POSTGRES_USER:-boutique}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-boutique}
+      # --- Agent OpenTelemetry : aucune ligne de code applicatif modifiée ---
+      JAVA_TOOL_OPTIONS: "-javaagent:/opt/opentelemetry-javaagent.jar -Xmx256m"
+      OTEL_SERVICE_NAME: boutique-java
+      OTEL_RESOURCE_ATTRIBUTES: "service.namespace=tp8,deployment.environment=lab,candidate=${CAND:-cand-XX}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none      # les métriques viennent de Prometheus
+      OTEL_LOGS_EXPORTER: none
+      OTEL_TRACES_SAMPLER: parentbased_always_on   # 100 % : c'est un lab
+    expose: ["8080"]
+    ports:
+      - "${APP_PORT:-8081}:8080"
+    networks: [tp8]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 512m
+    cpus: 1.0
+    logging: *tp8-logging
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
+
+networks:
+  tp8:
+    name: tp8
+    driver: bridge
+
+volumes:
+  prometheus_data:
+  alertmanager_data:
+  pushgateway_data:
+  grafana_data:
+  tempo_data:
+  postgres_data:

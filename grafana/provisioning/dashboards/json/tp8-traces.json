@@ -1,0 +1,79 @@
+{
+  "uid": "tp8-traces",
+  "title": "TP8 — Traces : latence et exemplars",
+  "tags": ["tp8", "traces"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "time": { "from": "now-15m", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(traces_spanmetrics_calls_total, service)",
+        "refresh": 2,
+        "includeAll": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Latence p95 par opération — clique un point pour ouvrir la trace",
+      "description": "Métriques dérivées des traces par le metrics-generator de Tempo. Les losanges sont les exemplars : chacun pointe vers une trace réelle.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(traces_spanmetrics_latency_bucket{service=\"$service\"}[5m])) by (le, span_name))",
+          "legendFormat": "{{span_name}}",
+          "exemplar": true
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Débit par opération (appels/s)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(traces_spanmetrics_calls_total{service=\"$service\"}[5m])) by (span_name)",
+          "legendFormat": "{{span_name}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Appels entre services (service graph)",
+      "description": "Qui appelle qui, d'après les traces. Alimente aussi l'onglet « Service Graph » de l'explorateur Tempo.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(traces_service_graph_request_total[5m])) by (client, server)",
+          "legendFormat": "{{client}} → {{server}}"
+        }
+      ]
+    }
+  ]
+}

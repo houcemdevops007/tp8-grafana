@@ -1,0 +1,33 @@
+# ---------------------------------------------------------------------------
+# TP8 — recording.yml (SOLUTION) — réservé au formateur
+# ---------------------------------------------------------------------------
+
+groups:
+  - name: tp8-recording
+    interval: 30s
+    rules:
+
+      - record: job:up:count
+        expr: count by (job) (up == 1)
+
+      # TODO 9 — lecture de droite à gauche :
+      #   node_cpu_seconds_total{mode="idle"}  compteur de secondes d'inactivité,
+      #                                        une série PAR CŒUR
+      #   rate(...[5m])                        secondes d'inactivité par seconde,
+      #                                        soit une fraction entre 0 et 1
+      #   avg by (instance)                    moyenne sur tous les cœurs
+      #   1 - ...                              fraction OCCUPÉE
+      #   * 100                                en pourcentage
+      - record: instance:node_cpu_utilisation:ratio
+        expr: >-
+          100 * (1 - avg by (instance) (
+            rate(node_cpu_seconds_total{mode="idle"}[5m])
+          ))
+
+      # Bonus : taux d'occupation des workers Apache, repris du TP2.
+      - record: instance:apache_workers_busy:ratio
+        expr: >-
+          100 * apache_workers{state="busy"}
+          / clamp_min(
+              apache_workers{state="busy"} + apache_workers{state="idle"}, 1
+            )

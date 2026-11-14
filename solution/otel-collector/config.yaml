@@ -1,0 +1,64 @@
+# ---------------------------------------------------------------------------
+# TP8 — OpenTelemetry Collector (SOLUTION) — réservé au formateur
+# ---------------------------------------------------------------------------
+
+receivers:
+  # TODO 19
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # TODO 20 — premier du pipeline : il doit pouvoir refuser AVANT que les
+  # données n'occupent de la mémoire dans les autres processors.
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 75
+    spike_limit_percentage: 15
+
+  # TODO 21 — dernier du pipeline : on groupe juste avant l'envoi.
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+exporters:
+  debug:
+    verbosity: basic
+
+  # TODO 22
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+
+service:
+  telemetry:
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+  pipelines:
+    # TODO 23
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo, debug]
+
+    # TODO 24
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [debug]

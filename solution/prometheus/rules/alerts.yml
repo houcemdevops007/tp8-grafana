@@ -1,0 +1,104 @@
+# ---------------------------------------------------------------------------
+# TP8 — alerts.yml (SOLUTION) — réservé au formateur
+# ---------------------------------------------------------------------------
+
+groups:
+  - name: tp8-alertes
+    rules:
+
+      - alert: InstanceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cible {{ $labels.instance }} injoignable"
+          description: >-
+            La cible {{ $labels.instance }} du job {{ $labels.job }} ne
+            répond plus depuis au moins 1 minute.
+
+      # TODO 10 — on réutilise la recording rule : l'expression reste lisible
+      # et le calcul n'est fait qu'une fois.
+      - alert: HighCpuUsage
+        expr: instance:node_cpu_utilisation:ratio > 80
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU à {{ $value | printf \"%.0f\" }} % sur {{ $labels.instance }}"
+          description: >-
+            Le CPU de {{ $labels.instance }} dépasse 80 % depuis 2 minutes
+            (valeur actuelle : {{ $value | printf "%.1f" }} %).
+
+      # TODO 11 — avail/size donne la fraction LIBRE ; 1 - ... la fraction
+      # utilisée. Les systèmes de fichiers virtuels sont exclus, sinon
+      # l'alerte se déclenche sur des montages overlay de conteneurs.
+      - alert: DiskSpaceLow
+        expr: >-
+          100 * (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"}
+          / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs"}) > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disque {{ $labels.mountpoint }} rempli à {{ $value | printf \"%.0f\" }} %"
+          description: >-
+            Le point de montage {{ $labels.mountpoint }} de
+            {{ $labels.instance }} dépasse 85 % d'occupation.
+
+      # TODO 12 — apache_up vient d'apache_exporter : il vaut 0 dès que
+      # mod_status ne répond plus, même si le conteneur tourne encore.
+      - alert: ApacheDown
+        expr: apache_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: web
+        annotations:
+          summary: "Apache ne répond plus ({{ $labels.instance }})"
+          description: >-
+            apache_exporter n'obtient plus /server-status?auto depuis
+            1 minute. Le serveur web est probablement arrêté.
+
+      # Alerte de trafic : volontairement présente pour démontrer
+      # l'inhibition de l'étape 5. Quand Apache tombe, le trafic tombe
+      # aussi — cette alerte-ci est la conséquence, pas la cause.
+      - alert: ApacheNoTraffic
+        expr: rate(apache_accesses_total[5m]) == 0
+        for: 2m
+        labels:
+          severity: warning
+          service: web
+        annotations:
+          summary: "Plus aucune requête sur Apache ({{ $labels.instance }})"
+          description: >-
+            Aucune requête servie depuis 2 minutes. Lance scripts/load.sh si
+            c'est seulement le générateur de trafic qui est arrêté.
+
+      # TODO 13 — time() renvoie l'heure d'évaluation en secondes Unix.
+      # L'écart avec l'horodatage poussé par le script donne l'âge de la
+      # dernière sauvegarde réussie.
+      - alert: BackupTooOld
+        expr: time() - backup_last_success_timestamp_seconds > 86400
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sauvegarde {{ $labels.job }} trop ancienne"
+          description: >-
+            La dernière sauvegarde réussie date de
+            {{ $value | humanizeDuration }}. Seuil : 24 h.
+
+      # Le piège expliqué à l'étape 6 : si le job n'a JAMAIS tourné, la
+      # métrique n'existe pas et BackupTooOld ne peut pas se déclencher.
+      # absent() couvre ce cas — une alerte sur l'ABSENCE de données.
+      - alert: BackupMetricMissing
+        expr: absent(backup_last_success_timestamp_seconds)
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Aucune métrique de sauvegarde dans la Pushgateway"
+          description: >-
+            backup_last_success_timestamp_seconds n'existe pas : le job de
+            sauvegarde n'a jamais poussé, ou la Pushgateway a été vidée.

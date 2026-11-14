@@ -1,0 +1,84 @@
+# ---------------------------------------------------------------------------
+# TP8 — OpenTelemetry Collector (SQUELETTE) — étape 10
+#
+# Un Collector se lit toujours dans cet ordre :
+#   receivers  : par où les données ENTRENT
+#   processors : ce qu'on leur fait au passage
+#   exporters  : par où elles SORTENT
+#   service    : quels receivers/processors/exporters sont réellement
+#                branchés ensemble. Un composant déclaré mais absent de
+#                « service » ne sert à RIEN.
+#
+# Ce fichier démarre tel quel (il reçoit et jette). Valider après édition :
+#   docker compose exec otel-collector /otelcol-contrib validate --config=/etc/otelcol/config.yaml
+# ---------------------------------------------------------------------------
+
+receivers:
+  # TODO 19 : le receiver OTLP écoute les deux protocoles.
+  #   grpc sur 0.0.0.0:4317 — utilisé par l'agent Java
+  #   http sur 0.0.0.0:4318 — utilisé par curl pour un test manuel
+  # ATTENTION : l'adresse doit être 0.0.0.0 et non localhost, sinon le
+  # Collector n'écoute que DANS son conteneur.
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # TODO 20 : memory_limiter — garde-fou obligatoire en production.
+  # Il refuse les données plutôt que de laisser le Collector être tué par
+  # l'OOM killer. Doit être le PREMIER processor du pipeline.
+  # memory_limiter:
+  #   check_interval: 1s
+  #   limit_percentage: 75
+  #   spike_limit_percentage: 15
+
+  # TODO 21 : batch — regroupe les spans avant envoi.
+  # Un envoi par span saturerait le réseau et Tempo. Doit être le DERNIER.
+  # batch:
+  #   timeout: 5s
+  #   send_batch_size: 512
+
+exporters:
+  # Exporter de secours : écrit un résumé dans les logs du Collector.
+  # Pratique pour vérifier que quelque chose arrive vraiment.
+  debug:
+    verbosity: basic
+
+  # TODO 22 : exporter OTLP vers Tempo.
+  #   endpoint : tempo:4317
+  #   tls      : insecure: true (réseau Docker privé, pas de certificat)
+  # otlp/tempo:
+  #   endpoint: tempo:4317
+  #   tls:
+  #     insecure: true
+
+service:
+  telemetry:
+    metrics:
+      # Les métriques internes du Collector, scrapées par Prometheus.
+      # 0.0.0.0 pour la même raison que le receiver.
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+  pipelines:
+    # TODO 23 : branche le pipeline des traces.
+    #   receivers  : [otlp]
+    #   processors : [memory_limiter, batch]   <- dans CET ordre
+    #   exporters  : [otlp/tempo, debug]
+    traces:
+      receivers: [otlp]
+      processors: []
+      exporters: [debug]
+
+    # TODO 24 : l'application n'envoie pas de métriques dans ce TP
+    # (OTEL_METRICS_EXPORTER=none) ; ce pipeline reste prêt pour la suite.
+    # metrics:
+    #   receivers: [otlp]
+    #   processors: [memory_limiter, batch]
+    #   exporters: [debug]

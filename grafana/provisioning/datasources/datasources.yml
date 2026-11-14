@@ -1,0 +1,62 @@
+# ---------------------------------------------------------------------------
+# TP8 — Sources de données Grafana (provisionnées au démarrage).
+#
+# « Provisionner » signifie : décrire la configuration dans un fichier versionné
+# plutôt que de cliquer dans l'interface. Supprime le volume Grafana, relance :
+# tu retrouves exactement les mêmes sources.
+# ---------------------------------------------------------------------------
+apiVersion: 1
+
+datasources:
+
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus              # référencé par les dashboards et par Tempo
+    access: proxy                # Grafana interroge Prometheus, pas ton navigateur
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s          # doit correspondre au scrape_interval
+      # Lien métrique -> trace : quand un point de courbe porte un exemplar,
+      # Grafana propose d'ouvrir la trace correspondante dans Tempo.
+      exemplarTraceIdDestinations:
+        # ATTENTION au nom exact du label. Le metrics-generator de Tempo écrit
+        # « traceID » ; une application instrumentée avec le SDK OpenTelemetry
+        # écrit plutôt « trace_id ». On déclare les deux : un nom qui ne
+        # correspond à rien ne provoque aucune erreur, juste un lien absent.
+        - name: traceID
+          datasourceUid: tempo
+          urlDisplayLabel: "Voir la trace"
+        - name: trace_id
+          datasourceUid: tempo
+          urlDisplayLabel: "Voir la trace"
+
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      # Depuis un span, sauter vers les métriques correspondantes.
+      tracesToMetrics:
+        datasourceUid: prometheus
+        spanStartTimeShift: '-5m'
+        spanEndTimeShift: '5m'
+        tags:
+          - key: service.name
+            value: service
+        queries:
+          - name: 'Débit (requêtes/s)'
+            query: 'sum(rate(traces_spanmetrics_calls_total{$$__tags}[5m]))'
+          - name: 'Latence p95'
+            query: 'histogram_quantile(0.95, sum(rate(traces_spanmetrics_latency_bucket{$$__tags}[5m])) by (le))'
+      # Carte des services, alimentée par le metrics-generator de Tempo.
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true
+      search:
+        hide: false
+      streamingEnabled:
+        search: true

@@ -1,0 +1,65 @@
+# ---------------------------------------------------------------------------
+# TP8 — alertmanager.yml (SOLUTION) — réservé au formateur
+# ---------------------------------------------------------------------------
+
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: 'mailpit:1025'
+  smtp_from: 'alertmanager@tp8.lab'
+  smtp_require_tls: false
+
+route:
+  receiver: 'equipe-infra'
+
+  # TODO 14 — une ligne par alertname : 12 disques pleins font 1 e-mail.
+  # Ajouter 'instance' ferait 12 e-mails ; ajouter 'severity' sépare les
+  # critiques des warnings dans des messages distincts.
+  group_by: ['alertname', 'severity']
+
+  # TODO 15
+  group_wait: 30s        # laisse arriver les alertes voisines
+  group_interval: 5m     # nouvelle alerte dans un groupe déjà notifié
+  repeat_interval: 1h    # rappel tant que c'est actif (4h en production)
+
+  # TODO 16 — la première route qui MATCHE gagne ; sans « continue: true »
+  # l'alerte ne descend pas plus bas. L'ordre compte donc.
+  routes:
+    - matchers:
+        - severity = critical
+      receiver: 'astreinte'
+      group_wait: 10s      # on ne fait pas attendre une alerte critique
+      repeat_interval: 30m
+
+receivers:
+  - name: 'equipe-infra'
+    email_configs:
+      # TODO 17
+      - to: 'infra@tp8.lab'
+        send_resolved: true
+        headers:
+          Subject: '[TP8][{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+
+  - name: 'astreinte'
+    email_configs:
+      - to: 'astreinte@tp8.lab'
+        send_resolved: true
+        headers:
+          Subject: '[TP8][CRITIQUE] {{ .CommonLabels.alertname }}'
+
+# TODO 18 — ApacheDown (la cause) éteint ApacheNoTraffic (la conséquence).
+# « equal » est la partie subtile : l'inhibition ne s'applique qu'entre
+# alertes partageant ces labels. Sans « equal », l'Apache en panne d'un
+# candidat éteindrait les alertes de trafic de tout le monde.
+inhibit_rules:
+  - source_matchers:
+      - alertname = ApacheDown
+    target_matchers:
+      - alertname = ApacheNoTraffic
+    equal: ['instance']
+
+  # Classique : une alerte critique masque le warning du même objet.
+  - source_matchers:
+      - severity = critical
+    target_matchers:
+      - severity = warning
+    equal: ['alertname', 'instance']

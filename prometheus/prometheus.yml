@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+# TP8 — prometheus.yml (SQUELETTE)
+#
+# Ce fichier démarre tel quel : Prometheus se scrape lui-même, rien d'autre.
+# À toi de compléter les TODO dans l'ordre du tutoriel.
+#
+# Après chaque modification :
+#     docker compose exec prometheus promtool check config /etc/prometheus/prometheus.yml
+#     curl -X POST http://localhost:9090/-/reload
+# ---------------------------------------------------------------------------
+
+global:
+  # TODO 1 : à quelle fréquence Prometheus interroge-t-il ses cibles ?
+  #          15s est un bon compromis pour un lab.
+  scrape_interval: 1m
+
+  # TODO 2 : à quelle fréquence évalue-t-il ses règles ?
+  #          Mets la même valeur que scrape_interval.
+  evaluation_interval: 1m
+
+  # TODO 3 : ajoute ici un label « candidate » valant ton identifiant
+  #          (cand-XX). Il sera collé à TOUTES tes séries.
+  # external_labels:
+  #   candidate: cand-XX
+
+# TODO 7 : déclare les fichiers de règles écrits à l'étape 4.
+# rule_files:
+#   - /etc/prometheus/rules/recording.yml
+#   - /etc/prometheus/rules/alerts.yml
+
+# TODO 8 : indique à Prometheus où envoyer ses alertes (étape 5).
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ['alertmanager:9093']
+
+scrape_configs:
+
+  # ---- Modèle fourni : Prometheus se surveille lui-même ------------------
+  # Les trois autres jobs se construisent exactement sur ce patron :
+  # un job_name, puis la liste des cibles « hôte:port ».
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # TODO 4 : job « node » — le conteneur node-exporter.
+  #          Nom de service dans le réseau Docker : node-exporter, port 9100.
+
+  # TODO 5 : job « apache » — le conteneur apache-exporter.
+  #          Nom de service : apache-exporter, port 9117.
+
+  # TODO 6 : job « pushgateway » (étape 6).
+  #          Nom de service : pushgateway, port 9091.
+  #          Ce job a besoin d'une option de plus — tu la découvriras à
+  #          l'étape 6 : sans elle, Prometheus écrase les labels « job » et
+  #          « instance » poussés par tes scripts.
+
+  # ---- Profil « traces » (étape 10) --------------------------------------
+  # Décommente ces deux jobs UNIQUEMENT quand le profil traces tourne,
+  # sinon leurs cibles seront DOWN et ton alerte InstanceDown se déclenchera.
+  # - job_name: otel-collector
+  #   static_configs:
+  #     - targets: ['otel-collector:8888']
+  #
+  # - job_name: tempo
+  #   static_configs:
+  #     - targets: ['tempo:3200']

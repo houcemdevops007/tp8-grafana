@@ -1,0 +1,92 @@
+# ---------------------------------------------------------------------------
+# TP8 — tempo.yaml : configuration COMPLÈTE (tu ne la modifies pas, tu
+# l'expliques). Tempo tourne ici en mode « monolithique » : tous ses rôles
+# dans un seul processus (-target=all, la valeur par défaut), stockage sur
+# disque local. En production, ces rôles se déploient séparément, sur un
+# stockage objet (S3, GCS, Azure Blob).
+#
+# Attention en cherchant de la documentation : Tempo 3 a réorganisé sa
+# configuration. Les blocs « ingester: » et « compactor: » des versions 2.x
+# n'existent plus — beaucoup d'exemples en ligne ne démarrent pas sur 3.x.
+# ---------------------------------------------------------------------------
+
+# Recherche en flux : les résultats s'affichent dans Grafana au fur et à
+# mesure, sans attendre la fin du parcours des blocs.
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200      # API + /ready + /metrics
+  log_level: info
+
+# --- Réception des traces ---------------------------------------------------
+# Tempo sait recevoir de l'OTLP directement. Dans ce TP c'est le Collector
+# qui lui parle : l'application n'écrit jamais vers Tempo en direct.
+# 0.0.0.0 et non localhost, sinon Tempo n'écoute que dans son conteneur.
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+
+# --- Rétention --------------------------------------------------------------
+# 24 h : au-delà, les blocs sont supprimés. C'est ce qui garde le disque sous
+# contrôle quand 20 stacks tournent en parallèle.
+# En 3.x la compaction est pilotée par un ordonnanceur (backend_scheduler) et
+# des exécutants (backend_worker) ; en mode monolithique les deux tournent
+# dans le même processus, mais la durée se déclare aux deux endroits.
+backend_scheduler:
+  provider:
+    compaction:
+      compaction:
+        block_retention: 24h
+
+backend_worker:
+  compaction:
+    block_retention: 24h
+
+# --- metrics-generator ------------------------------------------------------
+# Tempo ne fait pas que stocker : il DÉRIVE des métriques des traces reçues
+# et les envoie à Prometheus en remote_write.
+#   - span-metrics   : débit et latence par service et par opération
+#                      (c'est ce qui alimente le panneau de l'étape 13)
+#   - service-graphs : qui appelle qui -> la carte des services de Grafana
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+  storage:
+    path: /var/tempo/generator/wal
+    remote_write:
+      # Prometheus accepte ce flux grâce à --web.enable-remote-write-receiver.
+      - url: http://prometheus:9090/api/v1/write
+        send_exemplars: true      # <- le lien métrique -> trace
+
+# --- Stockage ---------------------------------------------------------------
+storage:
+  trace:
+    backend: local              # production : s3 / gcs / azure
+    wal:
+      path: /var/tempo/wal      # écriture en cours
+    local:
+      path: /var/tempo/blocks   # blocs scellés
+
+# --- Overrides --------------------------------------------------------------
+# Quels processeurs du metrics-generator sont actifs, par défaut pour tous les
+# tenants. Les couper allège Tempo si ta VM est juste en mémoire.
+overrides:
+  defaults:
+    metrics_generator:
+      processors:
+        - span-metrics
+        - service-graphs
+      # « both » produit les histogrammes classiques (…_bucket, utilisés par
+      # les requêtes de l'étape 13) ET les histogrammes natifs.
+      generate_native_histograms: both
+
+# Pas de statistiques d'usage envoyées à Grafana Labs : la VM du TP n'a pas
+# forcément de sortie Internet.
+usage_report:
+  reporting_enabled: false

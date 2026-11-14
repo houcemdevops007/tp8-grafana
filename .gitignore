@@ -1,0 +1,10 @@
+# Fichier d'environnement local du candidat (ports, mots de passe)
+.env
+
+# Artefacts de build de la mini-application
+app/target/
+
+# Rendus et captures des candidats
+*.patch
+*.tar.gz
+captures/
